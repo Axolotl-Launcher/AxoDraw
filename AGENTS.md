@@ -14,13 +14,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 - **上游（权威代码）**：`https://github.com/Axolotl-Launcher/AxoDraw`（org 仓库，public）。日常改代码、合 PR 都发生在这里。
 - **部署镜像（fork）**：`https://github.com/Mystic-Stars/AxoDraw`。Vercel 接不了 org 仓库（GitHub App 无 org 授权），所以生产部署走 fork。
-- **数据流**：org `main` →（fork 每小时自动 fast-forward 同步）→ fork `main` →（Vercel Git 集成自动部署）→ `draw.axlmc.org`。
+- **数据流**：org `main` →（fork 每小时自动同步）→ fork `main` →（Vercel Git 集成自动部署）→ `draw.axlmc.org`。
 
 ## 自动更新链路（fork 上的两个 workflow）
 
-两个 workflow 文件**只存在于 fork**，上游仓库没有；org→fork 的同步是 fast-forward，不会把它们删掉，也不会被上游同名文件覆盖：
+两个 workflow 文件**只存在于 fork**，上游仓库没有；org→fork 的同步用 `git merge`，不会把它们删掉，也不会被上游同名文件覆盖：
 
-1. `.github/workflows/sync-fork.yml` — 每小时第 17 分钟（cron `17 * * * *`）+ 手动触发。把 org 的 `main` fast-forward 合并进 fork 并 push；fork 若有本地提交导致非 fast-forward 会失败（可见的红色告警）。
+1. `.github/workflows/sync-fork.yml` — 每小时第 17 分钟（cron `17 * * * *`）+ 手动触发。流程：`git fetch` 上游 → `git merge`（**不要用 fast-forward**：fork 上有自己的提交——两个 workflow 文件——ff 必然失败报 `Not possible to fast-forward`）→ `git push`。push 走 **SSH**：fork 的 deploy key（`~/.ssh/axodraw_ci`，无口令，base64 存于 secret `SSH_PRIVATE_KEY_B64`，workflow 内手动起 ssh-agent 并导出 `SSH_AUTH_SOCK`）；fetch 上游走 HTTPS（org 仓库禁用了 deploy keys）。合并冲突时 workflow 失败报警，需人工处理。
 2. `.github/workflows/supabase-migrate.yml` — 推送涉及 `supabase/migrations/**` 时自动跑 `supabase db push`（也可手动触发）。⚠️ **必须在 GitHub Runner 上跑**：开发机到 Supabase pooler 的 TLS 握手会被出口网络阻断（TCP 通、TLS 直接 EOF），本机 `supabase db push` 必然失败，不要在本机尝试。
 
 ## 线上组件
@@ -55,8 +55,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ```bash
 # 推送代码（上游；fork 每小时 :17 自动同步 → Vercel 自动部署）
-git push origin main
+git push origin main                # origin 是 SSH：git@github.com:Axolotl-Launcher/AxoDraw.git
 # 想立即生效：fork 的 Actions → "Sync fork from upstream" → Run workflow
+
+# 本机 git 一律走 SSH（避免每次 HTTPS 弹账号选择）：
+#   ~/.ssh/id_ed25519        个人密钥，对应 GitHub 账号 Mystic-Stars
+#   ~/.ssh/axodraw_ci        CI 专用密钥（无口令）→ fork deploy key（写权限）；secret SSH_PRIVATE_KEY_B64
+#   ~/.ssh/config            把 github.com 指到 ssh.github.com:443（本机网络 22 端口不可靠，443 稳定）
 
 # Vercel CLI（本机已登录 mystic-stars）
 vercel deploy --prod --yes                        # 手动用当前目录部署生产
@@ -74,7 +79,7 @@ npx supabase link --project-ref uetylxulrahmqmfzfzdr
 
 ## 凭据存放位置（不要写进仓库，也不要写进本文件）
 
-- GitHub：gh keyring，账号 `Mystic-Stars`（org `Axolotl-Launcher` 成员，可建组织仓库）
+- GitHub：gh keyring，账号 `Mystic-Stars`（org `Axolotl-Launcher` 成员，可建组织仓库）；SSH 密钥 `~/.ssh/id_ed25519`（个人）+ `~/.ssh/axodraw_ci`（CI deploy key，fork 写权限；org 禁 deploy keys，上游 fetch 只能 HTTPS）
 - Vercel：CLI 登录态（用户 `mystic-stars`，team `stars-projects-49a5c865`）
 - Supabase：Windows 凭据管理器 `Supabase CLI:supabase`（CredRead 读取，44 字符 `sbp_…`）；数据库密码在 `.env.local`
 - Cloudflare：用户提供的 API token `cfat_…`（`/user/tokens/verify` 对该格式返回 401 是已知现象，直接调 API 正常）
