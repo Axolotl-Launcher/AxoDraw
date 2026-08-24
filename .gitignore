@@ -42,6 +42,9 @@ yarn-error.log*
 /.agents
 /skills-lock.json
 
+# 本地部署运维笔记（含项目 ref / 账号 id 等隐私信息，不入库）
+/AGENTS.md
+
 # local working copies
 /axodraw-temp
 

@@ -53,4 +53,4 @@
 ## 关于这个项目
 
 - 技术栈：Next.js + Supabase + Cloudflare Turnstile + drand 公开信标
-- 源码：[github.com/Axolotl-Launcher/AxoDraw](https://github.com/Axolotl-Launcher/AxoDraw)（部署架构见仓库内 `AGENTS.md`）
+- 源码：[github.com/Axolotl-Launcher/AxoDraw](https://github.com/Axolotl-Launcher/AxoDraw)
