@@ -33,10 +33,19 @@ npm run dev
 - 表 `axodraw_lotteries` 已启用 RLS 并对 `anon`/`authenticated` 添加 deny-by-default 策略，仅服务端 `service_role`（secret key）可访问；任何注册/匿名账号均无法经 Data API 读写。
 - 应用不使用 Supabase Auth，**公开注册入口已关闭**；如需开启：Dashboard → Authentication → Sign In / Up → Email → "Allow new users to sign up"。
 
+## 时间标准
+
+全站统一以**北京时间（Asia/Shanghai，UTC+8）**为时间基准：
+
+- 创建抽奖时，表单的截止时间按北京时间解释后以 ISO(UTC) 存储（不依赖服务器部署时区）；
+- 所有面向用户的展示与错误信息（截止时间、开奖解锁时间）一律按北京时间格式化；
+- 开奖在截止时间 +10 分钟后解锁，使用解锁时刻起生成的 drand 轮次，保证不可提前预测。
+
 ## Serverless API
 
 - `POST /api/lotteries` 创建抽奖（已接入 Turnstile 人机验证，见下）
 - `GET /api/lotteries/:code` 查询公开结果
+- `PATCH /api/lotteries/:code` 管理链接在截止时间前修改参与值（需 `token`）
 - `POST /api/lotteries/:code/draw` 使用 `token` 完成开奖
 - `GET /api/lotteries/:code/verify` 查询审计状态
 

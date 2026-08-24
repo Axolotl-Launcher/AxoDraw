@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import {
   drawLottery,
@@ -7,6 +6,12 @@ import {
   saveLottery,
   verifyToken,
 } from "@/lib/lottery-store";
+import {
+  BeaconUnavailableError,
+  fetchQuicknetBeacon,
+  quicknetRoundAt,
+} from "@/lib/beacon";
+import { formatBeijing, humanizeDuration, UNLOCK_DELAY_MS } from "@/lib/time";
 
 export async function POST(
   request: Request,
@@ -26,40 +31,37 @@ export async function POST(
     return NextResponse.json({ error: "管理凭证无效" }, { status: 401 });
   if (lottery.status === "drawn")
     return NextResponse.json({ lottery: publicLottery(lottery) });
-  const unlockAt = new Date(lottery.deadline).getTime() + 10 * 60 * 1000;
+
+  // 截止时间 +10 分钟才允许开奖：信标轮次从解锁时刻才开始，不可提前预测
+  const unlockAt = new Date(lottery.deadline).getTime() + UNLOCK_DELAY_MS;
   if (Date.now() < unlockAt)
     return NextResponse.json(
-      { error: `请在 ${new Date(unlockAt).toISOString()} 后开奖` },
+      {
+        error: `请在 ${formatBeijing(unlockAt)}（北京时间）后开奖（还需等待约 ${humanizeDuration(unlockAt - Date.now())}）`,
+      },
       { status: 425 },
     );
-  const targetRound =
-    Math.floor((Math.floor(unlockAt / 1000) - 1692803367) / 3) + 1;
+
+  const targetRound = quicknetRoundAt(Math.floor(unlockAt / 1000));
   let randomness = String(body.randomness || "");
   let signature = String(body.signature || "");
   let round = Number(body.round || targetRound);
   if (!randomness) {
-    const beacon = await fetch(
-      `https://api.drand.sh/v2/beacons/quicknet/rounds/${round}`,
-      { cache: "no-store" },
-    );
-    if (!beacon.ok)
+    try {
+      const beacon = await fetchQuicknetBeacon(round);
+      round = beacon.round;
+      signature = beacon.signature;
+      randomness = beacon.randomness;
+    } catch (cause) {
+      const reason =
+        cause instanceof BeaconUnavailableError
+          ? `drand 信标（轮次 ${cause.round}）尚未发布`
+          : String(cause instanceof Error ? cause.message : cause);
       return NextResponse.json(
-        { error: "目标 drand 信标尚未生成，请稍后重试", round },
+        { error: `${reason}，请稍候几秒重试` },
         { status: 425 },
       );
-    const payload = (await beacon.json()) as {
-      round: number;
-      randomness?: string;
-      signature: string;
-    };
-    round = payload.round;
-    signature = payload.signature;
-    // quicknet 为 unchained 网络，API 只返回签名，随机数按规范由签名推导
-    randomness =
-      payload.randomness ||
-      createHash("sha256")
-        .update(Buffer.from(signature, "hex"))
-        .digest("hex");
+    }
   }
   drawLottery(lottery, randomness, signature, round);
   await saveLottery(lottery);

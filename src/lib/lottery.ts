@@ -1,3 +1,5 @@
+import { formatBeijing } from "@/lib/time";
+
 export type Lottery = {
   code: string;
   title: string;
@@ -16,4 +18,5 @@ export const sampleCode = "AXO-7K4M";
 
 export const entries = (value: string) => value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
 
-export const dateLabel = (value: string) => new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+// 全站统一以北京时间为准展示时间，与查看者浏览器时区无关
+export const dateLabel = (value: string) => `${formatBeijing(value)}（北京时间）`;

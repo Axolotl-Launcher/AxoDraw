@@ -10,9 +10,10 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
+import { Textarea } from "@/components/ui/textarea";
 import { Stat } from "@/components/stat";
 import { cn } from "@/lib/utils";
-import { dateLabel, Lottery, sampleCode } from "@/lib/lottery";
+import { dateLabel, entries, Lottery, sampleCode } from "@/lib/lottery";
 
 export default function Home() {
   const [query, setQuery] = useState("");
@@ -24,6 +25,10 @@ export default function Home() {
   const [manageToken, setManageToken] = useState("");
   const [drawing, setDrawing] = useState(false);
   const [drawError, setDrawError] = useState("");
+  const [entriesDraft, setEntriesDraft] = useState("");
+  const [entriesSaving, setEntriesSaving] = useState(false);
+  const [entriesError, setEntriesError] = useState("");
+  const [entriesSaved, setEntriesSaved] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -38,6 +43,17 @@ export default function Home() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 管理模式：加载/保存后同步参与值草稿（渲染期同步，避免 effect 中 setState）
+  const [draftSource, setDraftSource] = useState<Lottery | null>(null);
+  if (result !== draftSource) {
+    setDraftSource(result);
+    if (result?.status === "scheduled" && manageCode === result.code && manageToken) {
+      setEntriesDraft(result.entries.join("\n"));
+      setEntriesSaved(false);
+      setEntriesError("");
+    }
+  }
 
   async function lookup(code = query, preserveManagementUrl = false) {
     const normalized = code.trim().toUpperCase();
@@ -63,6 +79,19 @@ export default function Home() {
       setResult(data.lottery);
     } catch (cause) { setDrawError(cause instanceof Error ? cause.message : "暂时无法开奖"); }
     finally { setDrawing(false); }
+  }
+
+  async function saveEntriesNow() {
+    if (!manageCode || !manageToken) return;
+    setEntriesSaving(true); setEntriesError(""); setEntriesSaved(false);
+    try {
+      const response = await fetch("/api/lotteries/" + manageCode, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: manageToken, entriesText: entriesDraft }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "保存失败");
+      setResult(data.lottery);
+      setEntriesSaved(true);
+    } catch (cause) { setEntriesError(cause instanceof Error ? cause.message : "保存失败"); }
+    finally { setEntriesSaving(false); }
   }
 
   return (
@@ -115,12 +144,41 @@ export default function Home() {
               </CardHeader>
               <CardContent className="flex flex-col gap-6">
                 {manageCode === result.code && manageToken && result.status === "scheduled" && (
-                  <div className="animate-fade-in flex flex-wrap items-center justify-between gap-4 rounded-2xl border bg-muted/40 p-4">
-                    <div className="flex flex-col gap-1">
-                      <p className="text-sm font-medium">管理模式</p>
-                      <p className="text-xs leading-5 text-muted-foreground">开奖使用截止后 10 分钟生成的 drand 信标，结果永久记录。</p>
+                  <div className="animate-fade-in flex flex-col gap-4 rounded-2xl border bg-muted/40 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-4">
+                      <div className="flex flex-col gap-1">
+                        <p className="text-sm font-medium">管理模式</p>
+                        <p className="text-xs leading-5 text-muted-foreground">开奖使用截止后 10 分钟生成的 drand 信标，结果永久记录。</p>
+                      </div>
+                      <Button onClick={() => void drawNow()} disabled={drawing}>{drawing && <Spinner data-icon="inline-start" />}立即开奖</Button>
                     </div>
-                    <Button onClick={() => void drawNow()} disabled={drawing}>{drawing && <Spinner data-icon="inline-start" />}立即开奖</Button>
+                    {Date.now() >= new Date(result.deadline).getTime() ? (
+                      <p className="border-t pt-4 text-xs leading-5 text-muted-foreground">
+                        已过截止时间：{dateLabel(result.deadline)}，参与值已锁定，不可再修改，可直接开奖。
+                      </p>
+                    ) : (
+                      <form
+                        onSubmit={(event) => { event.preventDefault(); void saveEntriesNow(); }}
+                        className="flex flex-col gap-3 border-t pt-4"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <p className="text-sm font-medium">参与值（截止前可修改）</p>
+                          <span className="font-mono text-[11px] text-muted-foreground">共 {entries(entriesDraft).length} 条 · {result.duplicatePolicy === "dedupe" ? "自动去重" : "不去重"}</span>
+                        </div>
+                        <Textarea
+                          value={entriesDraft}
+                          onChange={(event) => setEntriesDraft(event.target.value)}
+                          rows={8}
+                          className="min-h-44 resize-y bg-background font-mono text-sm"
+                          aria-label="参与值列表"
+                        />
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                          <Button type="submit" size="sm" disabled={entriesSaving}>{entriesSaving && <Spinner data-icon="inline-start" />}保存参与值</Button>
+                          {entriesSaved && <span className="text-xs text-emerald-600 dark:text-emerald-400">已保存，开奖将基于最新参与值</span>}
+                          {entriesError && <span className="text-xs text-red-600 dark:text-red-400">{entriesError}</span>}
+                        </div>
+                      </form>
+                    )}
                   </div>
                 )}
                 {drawError && <p className="font-mono text-xs text-muted-foreground">{drawError}</p>}

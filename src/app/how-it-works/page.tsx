@@ -15,7 +15,7 @@ const features = [
   {
     icon: Lock,
     title: "创建即锁定",
-    text: "标题、截止时间、参与值、中奖人数在创建时固定，之后不可修改。",
+    text: "标题、截止时间、中奖人数在创建时固定；参与值在截止前可凭管理链接修改，截止后锁定。",
   },
   {
     icon: Timer,
@@ -62,7 +62,7 @@ const verifySteps = [
 const limits = [
   "开奖需要管理链接手动触发，目前没有自动开奖。链接丢失或持有者不操作，就不会产生结果；但只要开奖，结果与操作者无关。",
   "信任模型是「记录公开、算法确定」，而不是信任网站或管理员。任何能复算的人都应该自己验一遍。",
-  "参与值由创建者填写，创建后锁定。创建时填了什么，开奖就用什么。",
+  "参与值由创建者填写，截止前可凭管理链接修改，截止后锁定。开奖以锁定后的名单为准，改过什么都会反映在公开记录里。",
 ];
 
 export default function HowItWorksPage() {
@@ -80,7 +80,7 @@ export default function HowItWorksPage() {
         <div className="flex flex-col gap-2">
           <h2 className="text-2xl font-semibold tracking-tight">一场抽奖的完整流程</h2>
           <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-            创建时所有参数一次锁定；截止 10 分钟后开奖解锁，结果由那一刻的 drand 信标唯一确定，并永久写入公开记录。
+            创建时锁定标题、截止时间与中奖人数；截止前可修改参与值，截止 10 分钟后开奖解锁，结果由那一刻的 drand 信标唯一确定，并永久写入公开记录。
           </p>
         </div>
         <figure className="rounded-2xl border bg-card p-4 sm:p-6">

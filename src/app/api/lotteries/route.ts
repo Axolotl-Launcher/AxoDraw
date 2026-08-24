@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createLottery, publicLottery, saveLottery } from "@/lib/lottery-store";
+import { parseBeijingDatetimeLocal } from "@/lib/time";
 
 const EXPECTED_ACTION = "create-lottery";
 
@@ -89,10 +90,11 @@ export async function POST(request: Request) {
         { error: "中奖人数需在 1 与参与值数量之间" },
         { status: 400 },
       );
-    const deadline = new Date(String(body.deadline));
-    if (Number.isNaN(deadline.getTime()) || deadline.getTime() <= Date.now())
+    // 表单提交的 datetime-local 值统一按北京时间（UTC+8）解释，再以 ISO(UTC) 存储
+    const deadline = parseBeijingDatetimeLocal(String(body.deadline ?? ""));
+    if (!deadline || deadline.getTime() <= Date.now())
       return NextResponse.json(
-        { error: "截止时间需晚于当前时间" },
+        { error: "截止时间需晚于当前时间（按北京时间）" },
         { status: 400 },
       );
     const normalizedEntries =

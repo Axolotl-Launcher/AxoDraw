@@ -95,7 +95,7 @@ export function CreateDraw() {
 
                     <div className="grid gap-6 sm:grid-cols-2">
                       <Field>
-                        <FieldLabel htmlFor="deadline">截止时间</FieldLabel>
+                        <FieldLabel htmlFor="deadline">截止时间 <span className="font-normal text-muted-foreground">按北京时间（UTC+8）</span></FieldLabel>
                         <Input id="deadline" type="datetime-local" required value={form.deadline} onChange={(e) => setForm({ ...form, deadline: e.target.value })} />
                       </Field>
                       <Field>
@@ -137,7 +137,7 @@ export function CreateDraw() {
                     )}
                   </CardContent>
                   <CardFooter className="flex flex-col items-stretch justify-between gap-4 border-t sm:flex-row sm:items-center">
-                    <p className="max-w-md text-xs leading-5 text-muted-foreground">创建后不可修改。管理链接只显示一次，请保存好。</p>
+                    <p className="max-w-md text-xs leading-5 text-muted-foreground">截止前可用管理链接修改参与值。管理链接只显示一次，请保存好。</p>
                     <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
                       {turnstileSitekey ? (
                         <TurnstileWidget onReady={onTurnstileReady} onToken={onTurnstileToken} />
@@ -202,7 +202,7 @@ export function CreateDraw() {
             <CardContent className="flex flex-col gap-5">
               <div className="flex gap-3">
                 <span className="grid size-6 shrink-0 place-items-center rounded-full bg-muted font-mono text-[10px] text-muted-foreground">01</span>
-                <p className="text-sm leading-5">标题、截止时间和名额创建后不可修改。</p>
+                <p className="text-sm leading-5">标题、截止时间和名额创建后不可修改；截止前可用管理链接修改参与值。</p>
               </div>
               <div className="flex gap-3">
                 <span className="grid size-6 shrink-0 place-items-center rounded-full bg-muted font-mono text-[10px] text-muted-foreground">02</span>
