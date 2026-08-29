@@ -76,7 +76,7 @@ export function CreateDraw() {
                   <span className="text-xs text-muted-foreground">无需登录，公开可验证</span>
                 </div>
                 <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">发起抽奖</h1>
-                <p className="max-w-xl text-sm leading-6 text-muted-foreground">无需注册，人人可发起。开奖依据截止后的公开信标，无需信任管理员。</p>
+                <p className="max-w-xl text-sm leading-6 text-muted-foreground">无需注册，人人可发起。开奖依据截止后的公开信标，轮次、签名、承诺和结果均可核验。</p>
               </div>
 
               <Card>

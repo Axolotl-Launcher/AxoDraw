@@ -1,7 +1,11 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
+import type { QuicknetBeacon } from "@/lib/beacon";
 import { loadLottery, persistLottery } from "@/lib/supabase";
 
+export const CURRENT_DRAW_ALGORITHM = "deterministic-v2" as const;
+export type DrawAlgorithm = "deterministic-v1" | typeof CURRENT_DRAW_ALGORITHM;
 export type LotteryStatus = "scheduled" | "drawn";
+
 export type Lottery = {
   code: string;
   title: string;
@@ -13,19 +17,38 @@ export type Lottery = {
   status: LotteryStatus;
   winners: string[];
   managementTokenHash: string;
+  /**
+   * Public snapshot hash of every field that affects the draw. This lets
+   * participants save the value before the deadline and detect later changes.
+   * It is not, by itself, an external timestamp or transparency log.
+   */
+  entriesCommitment?: string;
+  commitmentUpdatedAt?: string;
   draw?: {
     round: number;
     randomness: string;
     signature: string;
-    algorithm: string;
+    algorithm: DrawAlgorithm;
     drawnAt: string;
     digest: string;
+    entriesCommitment?: string;
   };
 };
 
 type PublicLottery = Omit<Lottery, "managementTokenHash"> & {
   managementToken?: string;
 };
+
+type NewLotteryInput = Pick<
+  Lottery,
+  | "title"
+  | "description"
+  | "deadline"
+  | "winnerCount"
+  | "duplicatePolicy"
+  | "entries"
+>;
+
 const store = globalThis as typeof globalThis & {
   __axodraw?: Map<string, Lottery>;
 };
@@ -33,16 +56,133 @@ const lotteries = store.__axodraw ?? new Map<string, Lottery>();
 store.__axodraw = lotteries;
 
 const SAMPLE_CODE = "AXO-7K4M";
+const V2_BLOCK_DOMAIN = Buffer.from("axodraw-deterministic-v2\0", "utf8");
+const UINT256_SPACE = 1n << 256n;
 
-// 示例抽奖：真实数据，可在 https://api.drand.sh/v2/beacons/quicknet/rounds/8550012 核对，
-// randomness 按 quicknet(unched) 规范由签名推导，digest 与名单由算法真实计算。
-const sampleLottery: Lottery = {
+export function hash(value: string | Buffer) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+/** Canonical, versioned snapshot of every stored field that affects a draw. */
+export function computeEntriesCommitment(
+  lottery: Pick<
+    Lottery,
+    | "code"
+    | "title"
+    | "description"
+    | "deadline"
+    | "winnerCount"
+    | "duplicatePolicy"
+    | "entries"
+  >,
+) {
+  const canonical = JSON.stringify({
+    version: "axodraw-commitment-v1",
+    code: lottery.code,
+    title: lottery.title,
+    description: lottery.description,
+    deadline: lottery.deadline,
+    winnerCount: lottery.winnerCount,
+    duplicatePolicy: lottery.duplicatePolicy,
+    entries: lottery.entries,
+  });
+  return `sha256:${hash(canonical)}`;
+}
+
+export function refreshEntriesCommitment(
+  lottery: Lottery,
+  updatedAt = new Date().toISOString(),
+) {
+  lottery.entriesCommitment = computeEntriesCommitment(lottery);
+  lottery.commitmentUpdatedAt = updatedAt;
+  return lottery.entriesCommitment;
+}
+
+function legacyV1Result(lottery: Lottery, randomness: string) {
+  const digest = hash(
+    [
+      randomness,
+      lottery.code,
+      lottery.entries.join("\n"),
+      "deterministic-v1",
+    ].join("|"),
+  );
+  const available = [...lottery.entries];
+  let state = BigInt(`0x${digest}`);
+  for (let i = available.length - 1; i > 0; i -= 1) {
+    state =
+      (state * 6364136223846793005n + 1442695040888963407n) &
+      (UINT256_SPACE - 1n);
+    const j = Number(state % BigInt(i + 1));
+    [available[i], available[j]] = [available[j], available[i]];
+  }
+  return {
+    digest: `sha256:${digest}`,
+    winners: available.slice(0, lottery.winnerCount),
+  };
+}
+
+/**
+ * Generates a domain-separated HMAC block for one rejection-sampling attempt.
+ * A fresh counter is used for every block, avoiding the low-bit correlations
+ * that made deterministic-v1's LCG shuffle strongly order-biased.
+ */
+function v2Block(seed: Buffer, counter: bigint) {
+  const counterBytes = Buffer.alloc(8);
+  counterBytes.writeBigUInt64BE(counter);
+  return createHmac("sha256", seed)
+    .update(V2_BLOCK_DOMAIN)
+    .update(counterBytes)
+    .digest();
+}
+
+function deterministicV2Result(lottery: Lottery, randomness: string) {
+  const commitment = computeEntriesCommitment(lottery);
+  const digest = hash(
+    [randomness, commitment, CURRENT_DRAW_ALGORITHM].join("|"),
+  );
+  const seed = Buffer.from(digest, "hex");
+  const available = [...lottery.entries];
+  let counter = 0n;
+
+  for (let i = available.length - 1; i > 0; i -= 1) {
+    const bound = BigInt(i + 1);
+    // Reject the short tail so every index has exactly the same number of
+    // 256-bit preimages. This removes modulo bias instead of approximating it.
+    const limit = UINT256_SPACE - (UINT256_SPACE % bound);
+    let sample: bigint;
+    do {
+      sample = BigInt(`0x${v2Block(seed, counter).toString("hex")}`);
+      counter += 1n;
+    } while (sample >= limit);
+    const j = Number(sample % bound);
+    [available[i], available[j]] = [available[j], available[i]];
+  }
+
+  return {
+    digest: `sha256:${digest}`,
+    winners: available.slice(0, lottery.winnerCount),
+  };
+}
+
+export function computeDrawResult(
+  lottery: Lottery,
+  randomness: string,
+  algorithm: DrawAlgorithm,
+) {
+  return algorithm === "deterministic-v1"
+    ? legacyV1Result(lottery, randomness)
+    : deterministicV2Result(lottery, randomness);
+}
+
+const sampleBase = {
   code: SAMPLE_CODE,
   title: "示例抽奖（演示数据）",
-  description: "这是一条用于演示的示例数据，不代表任何真实活动；结果由 drand 公开信标真实生成，可独立核验抽奖方法与结果。",
+  description:
+    "这是一条用于演示的示例数据，不代表任何真实活动；结果由 drand 公开信标真实生成，可独立核验抽奖方法与结果。",
   deadline: "2024-06-15T12:00:00.000Z",
   winnerCount: 3,
-  duplicatePolicy: "keep",
+  duplicatePolicy: "keep" as const,
   entries: [
     "service-001",
     "service-002",
@@ -50,28 +190,49 @@ const sampleLottery: Lottery = {
     "service-004",
     "service-005",
   ],
+};
+const sampleRandomness =
+  "f876d09fc9438e7d53dafb9bd1f2f3c78fe4e85ad9d272e1f979aa572247fb7a";
+const sampleCommitment = computeEntriesCommitment(sampleBase);
+const sampleResult = deterministicV2Result(
+  {
+    ...sampleBase,
+    status: "scheduled",
+    winners: [],
+    managementTokenHash: "sample",
+    entriesCommitment: sampleCommitment,
+    commitmentUpdatedAt: "2024-06-15T11:59:59.000Z",
+  },
+  sampleRandomness,
+);
+
+// 示例抽奖：信标来自 quicknet round 8550012；签名、randomness、摘要与
+// 名单均由生产路径使用的算法计算，不保留旧版有偏 LCG 的演示结果。
+const sampleLottery: Lottery = {
+  ...sampleBase,
   status: "drawn",
-  winners: ["service-003", "service-004", "service-002"],
+  winners: sampleResult.winners,
   managementTokenHash: "sample",
+  entriesCommitment: sampleCommitment,
+  commitmentUpdatedAt: "2024-06-15T11:59:59.000Z",
   draw: {
     round: 8550012,
-    randomness: "f876d09fc9438e7d53dafb9bd1f2f3c78fe4e85ad9d272e1f979aa572247fb7a",
-    signature: "88f87a10205ed031a3ae1eec64c4780c9aa787a679788b6259d0b973ea061d612c6bfb395eafacc788feeb5be11b2f18",
-    algorithm: "deterministic-v1",
+    randomness: sampleRandomness,
+    signature:
+      "88f87a10205ed031a3ae1eec64c4780c9aa787a679788b6259d0b973ea061d612c6bfb395eafacc788feeb5be11b2f18",
+    algorithm: CURRENT_DRAW_ALGORITHM,
     drawnAt: "2024-06-15T12:10:05.000Z",
-    digest: "sha256:f9e3cba8be88cbe68e6d0c67fcc93a7b308a5ecb939cebec8017e544ddb3ad96",
+    digest: sampleResult.digest,
+    entriesCommitment: sampleCommitment,
   },
 };
 
-// dev server 内存中的旧版本示例数据（假签名/假轮次）会在热更新后残留，
-// 检测到旧数据时自动替换为真实数据，无需重启。
 function seedSampleLottery() {
   const existing = lotteries.get(SAMPLE_CODE);
   const legacy =
     existing &&
-    (existing.draw?.signature === "sample-signature" ||
-      existing.draw?.round === 424242 ||
-      String(existing.draw?.digest).includes("sample"));
+    (existing.draw?.algorithm !== CURRENT_DRAW_ALGORITHM ||
+      existing.draw?.digest !== sampleLottery.draw?.digest);
   if (!existing || legacy) lotteries.set(SAMPLE_CODE, sampleLottery);
 }
 seedSampleLottery();
@@ -82,10 +243,9 @@ export function publicLottery(lottery: Lottery): PublicLottery {
   return safe;
 }
 
-export function createLottery(
-  input: Omit<Lottery, "code" | "status" | "winners" | "managementTokenHash">,
-) {
-  const code = `AXO-${randomBytes(3).toString("hex").toUpperCase()}`;
+export function createLottery(input: NewLotteryInput) {
+  // 64 random bits keep accidental collisions negligible even at large scale.
+  const code = `AXO-${randomBytes(8).toString("hex").toUpperCase()}`;
   const managementToken = randomBytes(24).toString("base64url");
   const lottery: Lottery = {
     ...input,
@@ -94,68 +254,56 @@ export function createLottery(
     winners: [],
     managementTokenHash: hash(managementToken),
   };
-  lotteries.set(code, lottery);
+  refreshEntriesCommitment(lottery);
   return { lottery, managementToken };
 }
 
 export function findLottery(code: string) {
   return lotteries.get(code.toUpperCase());
 }
+
 export async function getLottery(code: string) {
   const normalized = code.toUpperCase();
-  const cached = lotteries.get(normalized);
-  if (cached) return cached;
+  // Prefer durable storage so separate server instances cannot draw from a
+  // stale in-memory copy after another instance updates the participant list.
   const stored = await loadLottery(normalized);
-  if (stored) lotteries.set(normalized, stored);
-  return stored ?? null;
+  if (stored) {
+    lotteries.set(normalized, stored);
+    return stored;
+  }
+  return lotteries.get(normalized) ?? null;
 }
+
 export async function saveLottery(lottery: Lottery) {
-  lotteries.set(lottery.code, lottery);
   await persistLottery(lottery);
+  lotteries.set(lottery.code, lottery);
 }
-export function hash(value: string) {
-  return createHash("sha256").update(value).digest("hex");
-}
+
 export function verifyToken(lottery: Lottery, token: string) {
   return Boolean(token) && hash(token) === lottery.managementTokenHash;
 }
 
-export function drawLottery(
-  lottery: Lottery,
-  randomness: string,
-  signature: string,
-  round: number,
-) {
+export function drawLottery(lottery: Lottery, beacon: QuicknetBeacon) {
   if (lottery.status === "drawn") return lottery;
-  const digest = hash(
-    [
-      randomness,
-      lottery.code,
-      lottery.entries.join("\n"),
-      "deterministic-v1",
-    ].join("|"),
-  );
-  const available = lottery.entries.map((value, index) => ({ value, index }));
-  let state = BigInt(`0x${digest}`);
-  for (let i = available.length - 1; i > 0; i -= 1) {
-    state =
-      (state * 6364136223846793005n + 1442695040888963407n) &
-      ((1n << 256n) - 1n);
-    const j = Number(state % BigInt(i + 1));
-    [available[i], available[j]] = [available[j], available[i]];
+  const commitment = computeEntriesCommitment(lottery);
+  if (!lottery.entriesCommitment || lottery.entriesCommitment !== commitment) {
+    throw new Error("参与值承诺缺失或与当前记录不一致");
   }
-  lottery.winners = available
-    .slice(0, lottery.winnerCount)
-    .map((entry) => entry.value);
+  const result = computeDrawResult(
+    lottery,
+    beacon.randomness,
+    CURRENT_DRAW_ALGORITHM,
+  );
+  lottery.winners = result.winners;
   lottery.status = "drawn";
   lottery.draw = {
-    round,
-    randomness,
-    signature,
-    algorithm: "deterministic-v1",
+    round: beacon.round,
+    randomness: beacon.randomness,
+    signature: beacon.signature,
+    algorithm: CURRENT_DRAW_ALGORITHM,
     drawnAt: new Date().toISOString(),
-    digest: `sha256:${digest}`,
+    digest: result.digest,
+    entriesCommitment: commitment,
   };
-  lotteries.set(lottery.code, lottery);
   return lottery;
 }

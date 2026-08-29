@@ -10,8 +10,27 @@ export type Lottery = {
   entries: string[];
   status: "scheduled" | "drawn";
   winners: string[];
+  entriesCommitment?: string;
+  commitmentUpdatedAt?: string;
   managementToken?: string;
-  draw?: { round: number; randomness: string; signature: string; algorithm: string; drawnAt: string; digest: string };
+  draw?: {
+    round: number;
+    randomness: string;
+    signature: string;
+    algorithm: "deterministic-v1" | "deterministic-v2";
+    drawnAt: string;
+    digest: string;
+    entriesCommitment?: string;
+  };
+};
+
+export type DrawVerification = {
+  verified: boolean;
+  fair: boolean;
+  reason: string;
+  checks?: Record<string, boolean>;
+  expectedRound?: number;
+  expectedCommitment?: string;
 };
 
 export const sampleCode = "AXO-7K4M";
