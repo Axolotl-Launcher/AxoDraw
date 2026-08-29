@@ -21,7 +21,7 @@ export function TimelineDiagram() {
     { x: 170, title: "创建抽奖", sub: "生成编码与管理链接", cap: "参数一次锁定", highlight: false },
     { x: 385, title: "截止时间", sub: "参与窗口结束", cap: "参数不再可改", highlight: false },
     { x: 600, title: "解锁开奖", sub: "截止 + 10 分钟", cap: "drand 信标就绪", highlight: true },
-    { x: 815, title: "开奖完成", sub: "写入公开记录", cap: "结果永久可查", highlight: false },
+    { x: 815, title: "开奖完成", sub: "写入公开记录", cap: "结果公开可查", highlight: false },
   ] as const;
 
   return (
@@ -86,15 +86,15 @@ export function ResultDiagram() {
       <rect x={360} y={40} width={190} height={104} rx={12} style={{ fill: tone.card, stroke: tone.border, strokeWidth: 1.5 }} />
       <text x={455} y={66} textAnchor="middle" fontSize={15} style={text(tone.fg)}>确定性算法</text>
       <rect x={396} y={76} width={118} height={20} rx={10} style={{ fill: tone.muted }} />
-      <text x={455} y={89.5} textAnchor="middle" fontSize={10.5} style={{ ...mono, ...text(tone.mutedFg) }}>deterministic-v1</text>
-      <text x={455} y={128} textAnchor="middle" fontSize={12} style={text(tone.mutedFg)}>256 位种子洗牌</text>
+      <text x={455} y={89.5} textAnchor="middle" fontSize={10.5} style={{ ...mono, ...text(tone.mutedFg) }}>deterministic-v2</text>
+      <text x={455} y={128} textAnchor="middle" fontSize={12} style={text(tone.mutedFg)}>HMAC + 拒绝采样</text>
       <path d="M 550 92 L 596 92" stroke={tone.mutedFg} strokeWidth={1.5} fill="none" markerEnd="url(#deter-arrow)" />
       <rect x={600} y={40} width={250} height={104} rx={12} style={{ fill: tone.card, stroke: tone.border, strokeWidth: 1.5 }} />
       <text x={620} y={66} fontSize={15} style={text(tone.fg)}>中奖名单</text>
-      <text x={620} y={92} fontSize={12} style={{ ...mono, ...text(tone.fg) }}>01 · service-003</text>
-      <text x={620} y={109} fontSize={12} style={{ ...mono, ...text(tone.fg) }}>02 · service-004</text>
-      <text x={620} y={126} fontSize={12} style={{ ...mono, ...text(tone.fg) }}>03 · service-002</text>
-      <text x={620} y={166} fontSize={11} style={{ ...mono, ...text(tone.mutedFg) }}>digest = sha256:f9e3cba8…</text>
+      <text x={620} y={92} fontSize={12} style={{ ...mono, ...text(tone.fg) }}>01 · service-002</text>
+      <text x={620} y={109} fontSize={12} style={{ ...mono, ...text(tone.fg) }}>02 · service-003</text>
+      <text x={620} y={126} fontSize={12} style={{ ...mono, ...text(tone.fg) }}>03 · service-001</text>
+      <text x={620} y={166} fontSize={11} style={{ ...mono, ...text(tone.mutedFg) }}>digest = sha256:9dc4425a…</text>
     </svg>
   );
 }

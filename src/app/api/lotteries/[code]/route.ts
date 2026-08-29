@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   getLottery,
   publicLottery,
+  refreshEntriesCommitment,
   saveLottery,
   verifyToken,
 } from "@/lib/lottery-store";
@@ -45,7 +46,8 @@ export async function PATCH(
       { status: 409 },
     );
   const deadlineAt = new Date(lottery.deadline).getTime();
-  if (Date.now() >= deadlineAt)
+  const updatedAt = Date.now();
+  if (updatedAt >= deadlineAt)
     return NextResponse.json(
       {
         error: `已过截止时间（${formatBeijing(deadlineAt)} 北京时间），无法再修改参与值`,
@@ -71,6 +73,7 @@ export async function PATCH(
     );
 
   lottery.entries = normalized;
+  refreshEntriesCommitment(lottery, new Date(updatedAt).toISOString());
   await saveLottery(lottery);
   return NextResponse.json({ lottery: publicLottery(lottery) });
 }

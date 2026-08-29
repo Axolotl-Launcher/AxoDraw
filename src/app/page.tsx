@@ -13,7 +13,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { Stat } from "@/components/stat";
 import { cn } from "@/lib/utils";
-import { dateLabel, entries, Lottery, sampleCode } from "@/lib/lottery";
+import { dateLabel, DrawVerification, entries, Lottery, sampleCode } from "@/lib/lottery";
 
 export default function Home() {
   const [query, setQuery] = useState("");
@@ -21,6 +21,8 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
+  const [verification, setVerification] = useState<DrawVerification | null>(null);
+  const [verifying, setVerifying] = useState(false);
   const [manageCode, setManageCode] = useState("");
   const [manageToken, setManageToken] = useState("");
   const [drawing, setDrawing] = useState(false);
@@ -63,10 +65,37 @@ export default function Home() {
       const response = await fetch("/api/lotteries/" + encodeURIComponent(normalized));
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "未找到这个抽奖");
-      setResult(data.lottery); setAuditOpen(false);
+      setResult(data.lottery); setAuditOpen(false); setVerification(null);
+      if (data.lottery.status === "drawn") void verifyDraw(normalized);
       if (!preserveManagementUrl) window.history.replaceState(null, "", "/?code=" + normalized);
     } catch (cause) { setResult(null); setError(cause instanceof Error ? cause.message : "查询失败"); }
     finally { setLoading(false); }
+  }
+
+  async function verifyDraw(code: string) {
+    setVerifying(true);
+    try {
+      const response = await fetch(
+        "/api/lotteries/" + encodeURIComponent(code) + "/verify",
+      );
+      const data = await response.json();
+      setVerification({
+        verified: data.verified === true,
+        fair: data.fair === true,
+        reason: data.reason || (response.ok ? "验证完成" : "验证失败"),
+        checks: data.checks,
+        expectedRound: data.expectedRound,
+        expectedCommitment: data.expectedCommitment,
+      });
+    } catch (cause) {
+      setVerification({
+        verified: false,
+        fair: false,
+        reason: cause instanceof Error ? cause.message : "验证请求失败",
+      });
+    } finally {
+      setVerifying(false);
+    }
   }
 
   async function drawNow() {
@@ -77,6 +106,8 @@ export default function Home() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "暂时无法开奖");
       setResult(data.lottery);
+      setVerification(null);
+      void verifyDraw(data.lottery.code);
     } catch (cause) { setDrawError(cause instanceof Error ? cause.message : "暂时无法开奖"); }
     finally { setDrawing(false); }
   }
@@ -148,7 +179,7 @@ export default function Home() {
                     <div className="flex flex-wrap items-center justify-between gap-4">
                       <div className="flex flex-col gap-1">
                         <p className="text-sm font-medium">管理模式</p>
-                        <p className="text-xs leading-5 text-muted-foreground">开奖使用截止后 10 分钟生成的 drand 信标，结果永久记录。</p>
+                        <p className="text-xs leading-5 text-muted-foreground">开奖使用截止后 10 分钟的固定 drand 轮次，签名与结果会自动验证。</p>
                       </div>
                       <Button onClick={() => void drawNow()} disabled={drawing}>{drawing && <Spinner data-icon="inline-start" />}立即开奖</Button>
                     </div>
@@ -220,17 +251,44 @@ export default function Home() {
                     <ChevronArrow open={auditOpen} />
                   </CollapsibleTrigger>
                   <CollapsibleContent className="flex flex-col gap-6 pt-5">
+                    {result.status === "drawn" && (
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-muted/40 p-4">
+                        <div className="flex min-w-0 flex-col gap-1">
+                          <div className="flex items-center gap-2">
+                            <Badge
+                              variant={verification?.verified ? "default" : verification ? "destructive" : "secondary"}
+                            >
+                              {verifying ? "正在验证" : verification?.verified ? "验证通过" : verification ? "验证失败" : "等待验证"}
+                            </Badge>
+                            <span className="text-xs font-medium">独立验证</span>
+                          </div>
+                          <p className="text-xs leading-5 text-muted-foreground">
+                            {verification?.reason ?? "正在核对目标轮次、drand 签名、名单承诺、摘要与中奖结果。"}
+                          </p>
+                        </div>
+                        <Button size="sm" variant="outline" disabled={verifying} onClick={() => void verifyDraw(result.code)}>
+                          {verifying && <Spinner data-icon="inline-start" />}重新验证
+                        </Button>
+                      </div>
+                    )}
                     <div className="grid gap-x-8 gap-y-6 sm:grid-cols-2">
                       <Stat label="参与值数量" value={String(result.entries.length)} />
                       <Stat label="中奖名额" value={String(result.winnerCount)} />
                       <Stat label="随机信标" value={String(result.draw?.round ?? "等待开奖")} />
-                      <Stat label="算法版本" value={result.draw?.algorithm ?? "deterministic-v1"} />
+                      <Stat label="算法版本" value={result.draw?.algorithm ?? "deterministic-v2"} />
                     </div>
+                    {result.entriesCommitment && (
+                      <div className="flex flex-col gap-1 rounded-2xl border bg-muted/40 p-4 font-mono text-[11px] leading-6 text-muted-foreground break-all">
+                        <p>entriesCommitment: {result.entriesCommitment}</p>
+                        <p>commitmentUpdatedAt: {result.commitmentUpdatedAt ?? "unknown"}</p>
+                      </div>
+                    )}
                     {result.draw && (
                       <div className="flex flex-col gap-1 rounded-2xl border bg-muted/40 p-4 font-mono text-[11px] leading-6 text-muted-foreground break-all">
                         <p>randomness: {result.draw.randomness}</p>
                         <p>signature: {result.draw.signature}</p>
                         <p>digest: {result.draw.digest}</p>
+                        <p>drawCommitment: {result.draw.entriesCommitment ?? "legacy-missing"}</p>
                       </div>
                     )}
                     <div className="flex flex-col gap-2">

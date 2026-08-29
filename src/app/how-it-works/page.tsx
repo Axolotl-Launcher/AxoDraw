@@ -14,8 +14,8 @@ export const metadata: Metadata = {
 const features = [
   {
     icon: Lock,
-    title: "创建即锁定",
-    text: "标题、截止时间、中奖人数在创建时固定；参与值在截止前可凭管理链接修改，截止后锁定。",
+    title: "名单公开承诺",
+    text: "标题、截止时间和中奖人数创建时固定；名单每次修改都会更新公开 commitment，截止后锁定。",
   },
   {
     icon: Timer,
@@ -24,8 +24,8 @@ const features = [
   },
   {
     icon: Database,
-    title: "结果永久公开",
-    text: "随机数、签名、摘要与中奖名单都在公开页面，随时可查。",
+    title: "结果公开验证",
+    text: "随机数、签名、名单承诺、摘要与中奖名单都在公开页面，随时可查。",
   },
 ];
 
@@ -48,21 +48,22 @@ const beaconFacts = [
 ];
 
 const drawSteps = [
-  { number: "01", text: "计算摘要：把所有关键输入烙进一个散列值，digest = sha256(randomness | code | entries | \"deterministic-v1\")。" },
-  { number: "02", text: "洗牌：以 digest 为种子，用 256 位线性同余生成器产生伪随机数，对参与值逐位交换（Fisher–Yates），取前 N 名。" },
-  { number: "03", text: "记录：中奖名单、digest、round、randomness、signature 一并写入公开记录。" },
+  { number: "01", text: "生成承诺：按固定 JSON 字段顺序编码全部抽奖参数和参与值，commitment = sha256(canonical lottery)。" },
+  { number: "02", text: "生成种子：digest = sha256(randomness | commitment | \"deterministic-v2\")。用 digest 作为 HMAC-SHA-256 密钥，通过递增计数器生成相互独立的随机块。" },
+  { number: "03", text: "无偏洗牌：对每一步使用拒绝采样得到等概率下标，再执行 Fisher–Yates；记录名单、commitment、digest、round、randomness 与 signature。" },
 ];
 
 const verifySteps = [
-  { number: "01", text: "从公开页面复制 code、entries、randomness 与 digest。" },
-  { number: "02", text: "用任意语言按上面的两步重算 digest 并重跑洗牌。" },
-  { number: "03", text: "与页面记录比对：名单相同、摘要一致，即通过。" },
+  { number: "01", text: "由截止时间重新计算唯一 round，向 drand 获取该轮记录，并用固定 quicknet 公钥验证 BLS 签名。" },
+  { number: "02", text: "规范化全部抽奖参数与 entries，重算 commitment、digest，并用 deterministic-v2 重跑无偏洗牌。" },
+  { number: "03", text: "只有 round、signature、randomness、commitment、digest 与 winners 全部一致，才显示验证通过。" },
 ];
 
 const limits = [
   "开奖需要管理链接手动触发，目前没有自动开奖。链接丢失或持有者不操作，就不会产生结果；但只要开奖，结果与操作者无关。",
-  "信任模型是「记录公开、算法确定」，而不是信任网站或管理员。任何能复算的人都应该自己验一遍。",
-  "参与值由创建者填写，截止前可凭管理链接修改，截止后锁定。开奖以锁定后的名单为准，改过什么都会反映在公开记录里。",
+  "参与值由创建者填写，截止前可凭管理链接修改，截止后锁定。参与者应在截止前保存公开 commitment，开奖后再核对。",
+  "数据库内的 commitment 不是独立时间戳。没有提前保存 commitment 的人，仍需信任部署方没有同时改写数据库内容和时间；高价值场景需要外部只追加透明日志。",
+  "公开源码不等于部署证明。GitHub 仓库本身不能证明线上服务器运行的是同一份构建。",
 ];
 
 export default function HowItWorksPage() {
@@ -72,7 +73,7 @@ export default function HowItWorksPage() {
         <Badge variant="secondary" className="w-fit">运行原理</Badge>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">抽奖如何做到公开可验证</h1>
         <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-          一场抽奖从创建到开奖，不依赖任何人的信用：结果由公开的 drand 随机信标决定，任何人随时都能复算。
+          一场抽奖从创建到开奖，公开随机信标、名单承诺与确定性算法；任何人都能复算结果，并清楚看到系统仍保留的部署方信任边界。
         </p>
       </div>
 
@@ -80,7 +81,7 @@ export default function HowItWorksPage() {
         <div className="flex flex-col gap-2">
           <h2 className="text-2xl font-semibold tracking-tight">一场抽奖的完整流程</h2>
           <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-            创建时锁定标题、截止时间与中奖人数；截止前可修改参与值，截止 10 分钟后开奖解锁，结果由那一刻的 drand 信标唯一确定，并永久写入公开记录。
+            创建时锁定标题、截止时间与中奖人数；截止前可修改参与值并更新 commitment，截止 10 分钟后开奖解锁，结果由固定的 drand 轮次唯一确定并写入公开记录。
           </p>
         </div>
         <figure className="rounded-2xl border bg-card p-4 sm:p-6">
@@ -124,7 +125,7 @@ export default function HowItWorksPage() {
               round = ⌊(unlockAt − 1692803367) / 3⌋ + 1
             </pre>
             <p className="text-xs leading-5 text-muted-foreground">
-              unlockAt 是截止时间加 10 分钟；1692803367 是 quicknet 网络的起始时间（2023-08-23）。开奖时从 drand 官方 API 拉取该轮信标，记录中保存的 round、randomness、signature 都可随时与官方 API 核对。
+              unlockAt 是截止时间加 10 分钟；1692803367 是 quicknet 网络的起始时间（2023-08-23）。服务端不接受调用者指定 round、randomness 或 signature，而是从固定 chain hash 拉取目标轮次，并验证 quicknet 公钥、轮次、randomness 派生关系和 BLS 签名。
             </p>
           </CardContent>
         </Card>
@@ -149,7 +150,7 @@ export default function HowItWorksPage() {
           ))}
         </ol>
         <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-          因为算法完全公开且确定，任何人用相同输入重跑一遍，拿到的必定是同一个名单——这就是「可复算」。
+          deterministic-v2 不再使用旧版有低位相关性的 LCG。HMAC 计数器为每一步生成新随机块，拒绝采样保证每个交换下标拥有相同数量的 256 位原像；相同输入仍会得到唯一、可复算的名单。
         </p>
       </section>
 
@@ -157,7 +158,7 @@ export default function HowItWorksPage() {
         <div className="flex flex-col gap-2">
           <h2 className="text-2xl font-semibold tracking-tight">如何验证一场抽奖</h2>
           <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-            不需要信任网站，也不需要信任管理员。拿到公开记录，自己动手验一遍：
+            验证不只复算网站给出的摘要，还会重新获取目标 drand 轮次并核验签名。拿到公开记录后可以按同样步骤独立检查：
           </p>
         </div>
         <figure className="rounded-2xl border bg-card p-4 sm:p-6">

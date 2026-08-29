@@ -11,6 +11,7 @@ import {
   fetchQuicknetBeacon,
   quicknetRoundAt,
 } from "@/lib/beacon";
+import { parseDrawRequestBody } from "@/lib/draw-request";
 import { formatBeijing, humanizeDuration, UNLOCK_DELAY_MS } from "@/lib/time";
 
 export async function POST(
@@ -21,7 +22,15 @@ export async function POST(
   const lottery = await getLottery(code);
   if (!lottery)
     return NextResponse.json({ error: "未找到这个抽奖" }, { status: 404 });
-  const body = await request.json().catch(() => ({}));
+  let body;
+  try {
+    body = parseDrawRequestBody(await request.json().catch(() => ({})));
+  } catch (cause) {
+    return NextResponse.json(
+      { error: cause instanceof Error ? cause.message : "请求格式无效" },
+      { status: 400 },
+    );
+  }
   if (
     !verifyToken(
       lottery,
@@ -32,7 +41,7 @@ export async function POST(
   if (lottery.status === "drawn")
     return NextResponse.json({ lottery: publicLottery(lottery) });
 
-  // 截止时间 +10 分钟才允许开奖：信标轮次从解锁时刻才开始，不可提前预测
+  // 截止时间 +10 分钟才允许开奖；解锁时刻唯一映射到一个目标轮次。
   const unlockAt = new Date(lottery.deadline).getTime() + UNLOCK_DELAY_MS;
   if (Date.now() < unlockAt)
     return NextResponse.json(
@@ -42,28 +51,46 @@ export async function POST(
       { status: 425 },
     );
 
-  const targetRound = quicknetRoundAt(Math.floor(unlockAt / 1000));
-  let randomness = String(body.randomness || "");
-  let signature = String(body.signature || "");
-  let round = Number(body.round || targetRound);
-  if (!randomness) {
-    try {
-      const beacon = await fetchQuicknetBeacon(round);
-      round = beacon.round;
-      signature = beacon.signature;
-      randomness = beacon.randomness;
-    } catch (cause) {
-      const reason =
-        cause instanceof BeaconUnavailableError
-          ? `drand 信标（轮次 ${cause.round}）尚未发布`
-          : String(cause instanceof Error ? cause.message : cause);
-      return NextResponse.json(
-        { error: `${reason}，请稍候几秒重试` },
-        { status: 425 },
-      );
-    }
+  const commitmentUpdatedAt = new Date(
+    lottery.commitmentUpdatedAt ?? "",
+  ).getTime();
+  if (
+    !lottery.entriesCommitment ||
+    !Number.isFinite(commitmentUpdatedAt) ||
+    commitmentUpdatedAt >= new Date(lottery.deadline).getTime()
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "该抽奖缺少截止前生成的参与值承诺，无法安全开奖；请重新创建抽奖",
+      },
+      { status: 409 },
+    );
   }
-  drawLottery(lottery, randomness, signature, round);
+
+  // The request cannot override this value: one deadline maps to one round.
+  const targetRound = quicknetRoundAt(Math.floor(unlockAt / 1000));
+  let beacon;
+  try {
+    beacon = await fetchQuicknetBeacon(targetRound);
+  } catch (cause) {
+    const reason =
+      cause instanceof BeaconUnavailableError
+        ? `drand 信标（轮次 ${cause.round}）获取或验证失败：${cause.message}`
+        : String(cause instanceof Error ? cause.message : cause);
+    return NextResponse.json(
+      { error: `${reason}，请稍候几秒重试` },
+      { status: 425 },
+    );
+  }
+  try {
+    drawLottery(lottery, beacon);
+  } catch (cause) {
+    return NextResponse.json(
+      { error: cause instanceof Error ? cause.message : "抽奖记录验证失败" },
+      { status: 409 },
+    );
+  }
   await saveLottery(lottery);
   return NextResponse.json({ lottery: publicLottery(lottery) });
 }
